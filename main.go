@@ -34,7 +34,7 @@ func main() {
 	createtable.Exec()
 	defer database.Close()
 
-	//render.HandleFunc("/spasessions", SpaSessionList).Methods(http.MethodGet)        //show all spa session ****without jwt
+	render.HandleFunc("/spasessions", SpaSessionList).Methods(http.MethodGet)        //show all spa session ****without jwt
 	render.HandleFunc("/spasessions", SpaSessionCreate).Methods(http.MethodPost)     //add spa session
 	render.HandleFunc("/spasessions/{id}", SpaSessionDel).Methods(http.MethodDelete) //delete spa session
 	render.HandleFunc("/spasessions/{id}", SpaSessionBook).Methods(http.MethodPatch) //book spa session
@@ -75,13 +75,14 @@ func SpaSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Println(w, err)
 	}
+	var res SpaSession
 	for Sessions.Next() {
-		if err := Sessions.Scan(&s.ID, &s.CUSTOMER, &s.TIME); err != nil {
+		if err := Sessions.Scan(&res.ID, &res.CUSTOMER, &res.TIME); err != nil {
 			fmt.Println(err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenToken(s.ID, s.CUSTOMER, s.TIME))
+	json.NewEncoder(w).Encode(GenToken(res.ID, res.CUSTOMER, res.TIME))
 }
 
 func SpaSessionDel(w http.ResponseWriter, r *http.Request) {
@@ -100,20 +101,25 @@ func SpaSessionBook(w http.ResponseWriter, r *http.Request) {
 	var s SpaSession
 	_ = json.NewDecoder(r.Body).Decode(&s)
 
-	booksession := fmt.Sprintf("UPDATE spasession SET customer = '%s' WHERE id=%d", s.CUSTOMER, id)
+	booksession := fmt.Sprintf("UPDATE spasession SET customer = '%s' WHERE id=%d ", s.CUSTOMER, id)
 	_, err := database.Exec(booksession)
 	if err != nil {
-		fmt.Fprintln(w, err)
+		fmt.Println(err)
 	}
 	query := "SELECT * FROM spasession WHERE id= " + strconv.Itoa(int(id))
 	Sessions, _ := database.Query(query)
+	var res SpaSession
 	for Sessions.Next() {
-		if err := Sessions.Scan(&s.ID, &s.CUSTOMER, &s.TIME); err != nil {
-			fmt.Println(w, err)
+		if err := Sessions.Scan(&res.ID, &res.CUSTOMER, &res.TIME); err != nil {
+			fmt.Println(err)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenToken(s.ID, s.CUSTOMER, s.TIME))
+	if res.ID == 0 {
+		fmt.Println("Incorrect Session ID")
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(GenToken(res.ID, res.CUSTOMER, res.TIME))
+	}
 }
 
 type customClaims struct {
