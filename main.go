@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
+	"strings"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
@@ -38,13 +38,12 @@ func main() {
 	render.HandleFunc("/spasessions", SpaSessionCreate).Methods(http.MethodPost)     //add spa session
 	render.HandleFunc("/spasessions/{id}", SpaSessionDel).Methods(http.MethodDelete) //delete spa session
 	render.HandleFunc("/spasessions/{id}", SpaSessionBook).Methods(http.MethodPatch) //book spa session
+
 	http.ListenAndServe(":1234", render)
 
 }
 
 func SpaSessionList(w http.ResponseWriter, r *http.Request) {
-	t := time.Now()
-	fmt.Println(t)
 
 	allSessions, _ := database.Query("SELECT * FROM spasession;")
 	defer allSessions.Close()
@@ -52,6 +51,7 @@ func SpaSessionList(w http.ResponseWriter, r *http.Request) {
 	var session SpaSession
 	for allSessions.Next() {
 		if err := allSessions.Scan(&session.ID, &session.CUSTOMER, &session.TIME); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
 			fmt.Println(err)
 		}
 		sessions = append(sessions, session)
@@ -62,46 +62,90 @@ func SpaSessionList(w http.ResponseWriter, r *http.Request) {
 }
 
 func SpaSessionCreate(w http.ResponseWriter, r *http.Request) {
-	var s SpaSession
-	_ = json.NewDecoder(r.Body).Decode(&s)
-	addsession := fmt.Sprintf("INSERT INTO spasession (customer,time) VALUES ('%s','%s')", "Avaliable", s.TIME)
-	result, _ := database.Exec(addsession)
-	id, err := result.LastInsertId()
-	if err != nil {
-		fmt.Println(err)
+	tokenString := r.Header.Get("Authorization")
+	if len(tokenString) == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Println("Missing Authorization Header")
+		return
 	}
-	query := "SELECT * FROM spasession WHERE id = " + strconv.Itoa(int(id))
-	Sessions, err := database.Query(query)
-	if err != nil {
-		fmt.Println(w, err)
+	result, jwterr := jwtHandler(r)
+	if jwterr != nil {
+		fmt.Println(jwterr)
 	}
-	var res SpaSession
-	for Sessions.Next() {
-		if err := Sessions.Scan(&res.ID, &res.CUSTOMER, &res.TIME); err != nil {
+	admin := result.(jwt.MapClaims)["admin"].(bool)
+	if admin {
+		var s SpaSession
+		_ = json.NewDecoder(r.Body).Decode(&s)
+		addsession := fmt.Sprintf("INSERT INTO spasession (customer,time) VALUES ('%s','%s')", "Avaliable", s.TIME)
+		result, _ := database.Exec(addsession)
+		id, err := result.LastInsertId()
+		if err != nil {
 			fmt.Println(err)
 		}
+		query := "SELECT * FROM spasession WHERE id = " + strconv.Itoa(int(id))
+		Sessions, err := database.Query(query)
+		if err != nil {
+			fmt.Println(w, err)
+		}
+		var res SpaSession
+		for Sessions.Next() {
+			if err := Sessions.Scan(&res.ID, &res.CUSTOMER, &res.TIME); err != nil {
+				fmt.Println(err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(res)
+	} else {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Println("Only admin can create session")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenToken(res.ID, res.CUSTOMER, res.TIME))
+
 }
 
 func SpaSessionDel(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, _ := strconv.Atoi(vars["id"])
-	delsession := fmt.Sprintf("DELETE FROM spasession WHERE id=%d", id)
-	_, err := database.Exec(delsession)
-	if err != nil {
-		fmt.Println(w, err)
+	tokenString := r.Header.Get("Authorization")
+	if len(tokenString) == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Missing Authorization Header"))
+		return
 	}
+	result, jwterr := jwtHandler(r)
+	if jwterr != nil {
+		fmt.Println(jwterr)
+	}
+	admin := result.(jwt.MapClaims)["admin"].(bool)
+	if admin {
+		vars := mux.Vars(r)
+		id, _ := strconv.Atoi(vars["id"])
+		delsession := fmt.Sprintf("DELETE FROM spasession WHERE id=%d", id)
+		_, err := database.Exec(delsession)
+		if err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Println("Only admin can delete session")
+	}
+
 }
 
 func SpaSessionBook(w http.ResponseWriter, r *http.Request) {
+	tokenString := r.Header.Get("Authorization")
+	if len(tokenString) == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Missing Authorization Header"))
+		return
+	}
+	result, jwterr := jwtHandler(r)
+	if jwterr != nil {
+		fmt.Println(jwterr)
+	}
+	name := result.(jwt.MapClaims)["name"].(string)
+
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
-	var s SpaSession
-	_ = json.NewDecoder(r.Body).Decode(&s)
 
-	booksession := fmt.Sprintf("UPDATE spasession SET customer = '%s' WHERE id=%d ", s.CUSTOMER, id)
+	booksession := fmt.Sprintf("UPDATE spasession SET customer = '%s' WHERE id=%d ", name, id)
 	_, err := database.Exec(booksession)
 	if err != nil {
 		fmt.Println(err)
@@ -118,25 +162,19 @@ func SpaSessionBook(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Incorrect Session ID")
 	} else {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenToken(res.ID, res.CUSTOMER, res.TIME))
+		json.NewEncoder(w).Encode(res)
 	}
 }
 
-type customClaims struct {
-	ID       int    `json:"id"`
-	CUSTOMER string `json: "customer"`
-	TIME     string `json: "time"`
-	jwt.StandardClaims
-}
-
-func GenToken(id int, customer string, time string) string {
-	claims := &customClaims{
-		id,
-		customer,
-		time,
-		jwt.StandardClaims{},
+func jwtHandler(r *http.Request) (jwt.Claims, error) {
+	body := strings.Split(r.Header["Authorization"][0], " ")
+	tokenString := body[1]
+	signingKey := []byte("thekeyiskeykeykey")
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return signingKey, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("tonssecretkeyisnothing"))
-
-	return token
+	return token.Claims, err
 }
