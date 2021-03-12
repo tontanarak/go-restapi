@@ -47,10 +47,4 @@ DELETE /spasessions/{id}
 ```bash
 PATCH /spasessions/{id}
 
-# sample
-
-{
-    "CUSTOMER": "Tanarak Chunsanit"
-}
-
 ```
