@@ -33,7 +33,7 @@ POST /spasessions
 
 # sample
 {
-    "time" : "2021-03-12 05:12:48"
+    "time" : "2021-03-12 05:12:48" //time of session
 }
 
 ```
